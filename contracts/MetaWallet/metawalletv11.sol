@@ -10,7 +10,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract MetaWalletV11 is ReentrancyGuard, Ownable {
     using ECDSA for bytes32;
 
-    address public owner;
     address public smartWallet; // New smart wallet that will cover gas fees
     bytes public userWalletBytecode;
     mapping(address => bool) public relayerWhitelist;
@@ -33,8 +32,8 @@ contract MetaWalletV11 is ReentrancyGuard, Ownable {
     event RelayerRemoved(address relayer);
     event SmartWalletSet(address smartWallet);
 
-    constructor() {
-        owner = msg.sender;
+    constructor() Ownable() {
+        // This calls the Ownable constructor to set the initial owner
     }
 
     modifier onlyRelayer() {
