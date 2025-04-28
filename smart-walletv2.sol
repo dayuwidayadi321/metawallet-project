@@ -60,7 +60,9 @@ contract SmartWalletV2 is EIP712 {
     }
 
     // Fungsi untuk membuat sub-wallet baru
-    function createSubWallet(bytes calldata signature) external {
+    function createSubWallet(bytes calldata signature, uint256 deadline) external {
+        require(block.timestamp <= deadline, "Signature expired");
+
         bytes32 digest = _hashTypedDataV4(
             keccak256(abi.encode(
                 META_TX_TYPEHASH,
@@ -68,15 +70,16 @@ contract SmartWalletV2 is EIP712 {
                 msg.sender,
                 0,
                 keccak256(bytes("createSubWallet")),
-                nonces[msg.sender]++,
-                block.timestamp + 1 days
+                nonces[msg.sender],
+                deadline
             ))
         );
-        
+
         address signer = digest.recover(signature);
         require(signer == owner, "Invalid signature");
         require(!subWallets[msg.sender], "Sub-wallet exists");
 
+        nonces[msg.sender]++;
         subWallets[msg.sender] = true;
         emit SubWalletCreated(msg.sender, owner);
     }
