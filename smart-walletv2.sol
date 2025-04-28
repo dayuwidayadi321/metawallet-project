@@ -208,6 +208,7 @@ contract SmartWalletV2 is EIP712 {
 
     // Fungsi untuk menerima pembayaran gas dari sub-wallet
     function payForGas(address subWallet, uint256 amount) external onlySubWallet {
+        require(subWallets[subWallet], "Not a valid sub-wallet");
         require(address(this).balance >= amount, "Insufficient balance");
         payable(address(entryPoint)).transfer(amount);
     }
