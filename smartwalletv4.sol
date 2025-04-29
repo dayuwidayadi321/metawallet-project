@@ -65,7 +65,10 @@ contract SmartWalletV4 is Ownable, EIP712 {
     // =============================================
     // ============== Constructor ==================
     // =============================================
-    constructor(uint256 _minGasBalance) EIP712(WALLET_NAME, WALLET_VERSION) {
+    constructor(uint256 _minGasBalance, address initialOwner) 
+        Ownable(initialOwner)
+        EIP712(WALLET_NAME, WALLET_VERSION)
+    {
         minGasBalance = _minGasBalance;
         // Automatically whitelist the deployer as initial relayer
         _addRelayer(msg.sender);
