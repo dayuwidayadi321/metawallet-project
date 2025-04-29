@@ -7,22 +7,19 @@ contract Proxy {
 
     constructor(address _implementation) {
         implementation = _implementation;
-        admin = msg.sender;  // Hanya admin yang bisa meng-upgrade
+        admin = msg.sender;
     }
 
-    // Modifier untuk memastikan hanya admin yang bisa memperbarui implementasi
     modifier onlyAdmin() {
         require(msg.sender == admin, "Anda bukan admin");
         _;
     }
 
-    // Fungsi untuk memperbarui alamat kontrak implementasi
     function upgrade(address _newImplementation) external onlyAdmin {
         implementation = _newImplementation;
     }
 
-    // Fungsi fallback untuk meneruskan panggilan ke kontrak implementasi
-    fallback() external payable {
+    fallback() external {  // Tidak ada `payable`
         address _impl = implementation;
         (bool success, ) = _impl.delegatecall(msg.data);
         require(success, "Delegatecall gagal");
