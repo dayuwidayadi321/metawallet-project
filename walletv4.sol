@@ -244,6 +244,15 @@ contract AdvancedSmartWallet is IERC1271, Initializable, UUPSUpgradeable, Reentr
         if (block.timestamp > session.validUntil) return false;
         return true;
     }
+    
+    // ========== ERC1271 Implementation ========== //
+    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4 magicValue) {
+        if (_validateSignature(hash, signature)) {
+            return IERC1271.isValidSignature.selector;
+        } else {
+            return bytes4(0);
+        }
+    }
 
     // ========== Upgrade & Fallback ========== //
     function _authorizeUpgrade(address) internal override onlyOwner {}
