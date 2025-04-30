@@ -238,11 +238,12 @@ contract AdvancedSmartWallet is IERC1271, Initializable, UUPSUpgradeable, Reentr
         return owners[recovered] || _isValidSessionKey(recovered, hash);
     }
 
+    // ========== Valid Session Key ========== //
     function _isValidSessionKey(address key, bytes32 hash) internal view returns (bool) {
         SessionKey storage session = sessionKeys[key];
-        if (session.key == address(0)) return false;
-        if (block.timestamp > session.validUntil) return false;
-        return true;
+        return session.key != address(0) 
+            && block.timestamp <= session.validUntil
+            && session.isAllowedFunction[bytes4(hash)];
     }
     
     // ========== ERC1271 Implementation ========== //
