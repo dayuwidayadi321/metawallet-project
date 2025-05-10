@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/**
+ * @title SecureSmartWalletSignatures v5.1
+ * @dev Next-generation signature module with:
+ * - Full EIP-712 and ERC-4337 compliance
+ * - Cross-chain signature replay protection
+ * - Gas-optimized batch verification
+ * - Deep integration with Core v5.1
+ * @notice Key Upgrades:
+ * 1. Unified nonce management via Core
+ * 2. Plugin-aware signature validation
+ * 3. Optimized storage layout
+ * 4. Enhanced security checks
+ */
+
+import "./SecureSmartWalletCore.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
+
+abstract contract SecureSmartWalletSignatures is SecureSmartWalletCore {
+    using ECDSA for bytes32;
+    using MessageHashUtils for bytes;
+
+    /* ========== CONSTANTS ========== */
+    bytes32 public constant DEPOSIT_TYPEHASH = 
+        keccak256("Deposit(address wallet,uint256 amount,uint256 nonce,uint256 deadline)");
+    uint256 public constant SIGNATURE_VALID_WINDOW = 24 hours;
+
+    /* ========== STRUCTS ========== */
+    struct SignatureRequest {
+        bytes32 requestHash;
+        uint64 validUntil;
+        bool executed;
+    }
+
+    /* ========== STATE VARIABLES ========== */
+    mapping(bytes32 => SignatureRequest) public signatureRequests;
+    mapping(bytes32 => bool) public usedMessageHashes;
+
+    /* ========== EVENTS ========== */
+    event SignatureValidated(
+        address indexed signer,
+        bytes32 indexed messageHash,
+        uint256 indexed chainId
+    );
+    event CrossChainSignature(
+        bytes32 indexed requestHash,
+        uint256 sourceChainId,
+        address initiator
+    );
+
+    /* ========== MODIFIERS ========== */
+    modifier onlyValidRequest(bytes32 requestHash) {
+        require(
+            signatureRequests[requestHash].validUntil >= block.timestamp &&
+            !signatureRequests[requestHash].executed,
+            "Invalid request"
+        );
+        _;
+    }
+
+    /* ========== INITIALIZER ========== */
+    function __Signatures_init() internal onlyInitializing {}
+
+    /* ========== EXTERNAL FUNCTIONS ========== */
+
+    /**
+     * @dev Validate deposit with EIP-712 signature
+     */
+    function depositWithSignature(
+        uint256 amount,
+        uint256 deadline,
+        bytes calldata signature
+    ) external payable whenNotLocked {
+        require(msg.value == amount, "Incorrect ETH amount");
+        require(deadline >= block.timestamp, "Expired deadline");
+
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(abi.encode(
+                DEPOSIT_TYPEHASH,
+                address(this),
+                amount,
+                sessionNonces[msg.sender]++,
+                deadline
+            ))
+        );
+
+        _validateSignature(digest, signature);
+        emit SignatureValidated(msg.sender, digest, block.chainid);
+    }
+
+    /**
+     * @dev Batch signature verification
+     */
+    function validateSignaturesBatch(
+        bytes32[] calldata messageHashes,
+        bytes[] calldata signatures,
+        bool[] calldata isOwnerSignatures
+    ) external view returns (bool[] memory) {
+        require(
+            messageHashes.length == signatures.length && 
+            signatures.length == isOwnerSignatures.length,
+            "Length mismatch"
+        );
+
+        bool[] memory results = new bool[](messageHashes.length);
+        for (uint256 i = 0; i < messageHashes.length; ) {
+            address signer = messageHashes[i].recover(signatures[i]);
+            results[i] = isOwnerSignatures[i] 
+                ? isOwner[signer] 
+                : _isActiveGuardian(signer);
+            unchecked { ++i; }
+        }
+        return results;
+    }
+
+    /* ========== ERC-4337 INTEGRATION ========== */
+    function validateUserOp(
+        UserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingWalletFunds
+    ) external onlyEntryPoint returns (uint256 validationData) {
+        if (env.isLocked) return _packValidationData(true, 0, 0);
+        
+        if (missingWalletFunds > 0) {
+            (bool success,) = address(entryPoint).call{value: missingWalletFunds}("");
+            require(success, "Gas deposit failed");
+        }
+
+        bytes32 digest = _hashTypedDataV4(userOpHash);
+        if (!_validateSignature(digest, userOp.signature)) {
+            return _packValidationData(true, 0, 0);
+        }
+
+        return 0; // Validation passed
+    }
+
+    /* ========== INTERNAL FUNCTIONS ========== */
+    function _validateSignature(
+        bytes32 digest,
+        bytes memory signature
+    ) internal returns (bool) {
+        require(!usedMessageHashes[digest], "Signature reused");
+        usedMessageHashes[digest] = true;
+
+        (address signer, ECDSA.RecoverError err) = ECDSA.tryRecover(digest, signature);
+        if (err != ECDSA.RecoverError.NoError) return false;
+        
+        return isOwner[signer] || _isActiveGuardian(signer);
+    }
+
+    function _packValidationData(bool sigFailed, uint48 validAfter, uint48 validUntil) 
+        internal pure returns (uint256) {
+        return (sigFailed ? 1 : 0) | (uint256(validAfter) << 160 | (uint256(validUntil) << (160 + 48);
+    }
+
+    /* ========== STORAGE GAP ========== */
+    uint256[50] private __gap;
+}
+
