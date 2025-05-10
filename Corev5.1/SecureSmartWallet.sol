@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+/**
+ * @title SecureSmartWallet v5.1 - Modular EIP-4337 Smart Wallet
+ * @notice Ultimate secure wallet with full Core v5.1 integration
+ * @dev Upgraded architecture with:
+ * - Cross-chain support
+ * - Plugin whitelisting
+ * - Dynamic gas management
+ * - Timelock upgrades
+ * - Backward compatibility with v4.50
+ */
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./SecureSmartWalletCore.sol";
+import "./modules/SecureSmartWalletOwnership.sol";
+import "./modules/SecureSmartWalletGuardian.sol";
+import "./modules/SecureSmartWalletSecurity.sol";
+import "./modules/SecureSmartWalletUpgrade.sol";
+import "./modules/SecureSmartWalletExecute.sol";
+import "./modules/SecureSmartWalletEmergency.sol";
+import "./modules/SecureSmartWalletSignatures.sol";
+
+contract SecureSmartWallet is
+    SecureSmartWalletCore,
+    SecureSmartWalletOwnership,
+    SecureSmartWalletGuardian,
+    SecureSmartWalletSecurity,
+    SecureSmartWalletExecute,
+    SecureSmartWalletEmergency,
+    SecureSmartWalletSignatures
+{
+    // ========== CONSTANTS ========== //
+    string public constant NAME = "SecureSmartWallet";
+    string public constant VERSION = "5.1.0";
+    uint256 public constant MAX_GUARDIANS = 10; // Security limit
+
+    // ========== CONSTRUCTOR ========== //
+    constructor(IEntryPoint _entryPoint, address _gasOracle) 
+        SecureSmartWalletCore(_entryPoint, _gasOracle) 
+    {
+        _disableInitializers();
+    }
+
+    // ========== EVENTS ========== //
+    event ImplementationUpgraded(address newImplementation);
+    event WalletInitialized(address[] owners, address[] guardians);
+    event PluginWhitelisted(address indexed plugin, bool status);
+    event CrossChainOperation(uint256 indexed chainId, bytes indexed payload);
+
+    // ========== INITIALIZATION ========== //
+    function initialize(
+        address[] calldata _owners,
+        address[] calldata _guardians,
+        uint256 _guardianThreshold,
+        address _factory,
+        uint256[] memory _supportedChains
+    ) external initializer {
+        // Input validation
+        require(_owners.length > 0, "No owners");
+        require(_guardians.length <= MAX_GUARDIANS, "Too many guardians");
+        require(_guardianThreshold <= _guardians.length, "Invalid threshold");
+
+        // Initialize core (v5.1)
+        __Core_init(_factory);
+        
+        // Set supported chains
+        for (uint256 i = 0; i < _supportedChains.length; i++) {
+            supportedChains[_supportedChains[i]] = true;
+        }
+
+        // Initialize modules
+        __Ownership_init(_owners);
+        __Guardian_init(_guardians, _guardianThreshold);
+        __Security_init();
+        __Upgrade_init();
+        __Execute_init();
+        __SecureSmartWalletEmergency_init();
+        __SecureSmartWalletSignatures_init();
+
+        emit WalletInitialized(_owners, _guardians);
+    }
+
+    // ========== CROSS-MODULE OVERRIDES ========== //
+    function _requireAuth() internal view override {
+        require(isOwner[msg.sender] || _isEmergencyOverride(), "Unauthorized");
+    }
+
+    function _isActiveGuardian(address guardian) internal view override returns (bool) {
+        return guardianConfig.isActive[guardian] && !isBlacklisted[guardian];
+    }
+
+    function _isValidSigner(address signer, bytes32 hash, bytes memory signature) internal view override returns (bool) {
+        return isOwner[signer] || (_isActiveGuardian(signer) && _isValidGuardianSignature(hash, signature));
+    }
+
+    // ========== UPGRADE SAFETY ========== //
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner whenNotLocked {
+        require(newImplementation != address(0), "Invalid implementation");
+        require(newImplementation != _getImplementation(), "Same implementation");
+        _validateImplementation(newImplementation);
+        emit ImplementationUpgraded(newImplementation);
+    }
+
+    // ========== ENHANCED v5.1 FEATURES ========== //
+    function whitelistPlugin(address plugin, bool status) external onlyOwner {
+        require(installedPlugins[plugin].implementation != address(0), "Plugin not installed");
+        installedPlugins[plugin].isWhitelisted = status;
+        emit PluginWhitelisted(plugin, status);
+    }
+
+    function executeCrossChain(
+        uint256 targetChainId,
+        bytes calldata payload,
+        uint256 gasLimit,
+        address refundAddress,
+        uint256 bridgeFee,
+        bytes calldata signature
+    ) external payable override {
+        require(supportedChains[targetChainId], "Unsupported chain");
+        require(msg.value >= bridgeFee, "Insufficient bridge fee");
+        
+        _executeCrossChain(targetChainId, payload, gasLimit, refundAddress, bridgeFee, signature);
+        emit CrossChainOperation(targetChainId, payload);
+    }
+
+    // ========== BACKWARD COMPATIBILITY ========== //
+    function legacyExecute(address dest, uint256 value, bytes calldata func) 
+        external 
+        onlyOwner 
+        returns (bytes memory) 
+    {
+        require(!isBlacklisted[dest], "Destination blacklisted");
+        (bool success, bytes memory result) = dest.call{value: value}(func);
+        require(success, "Execution failed");
+        return result;
+    }
+
+    // ========== SECURITY ENHANCEMENTS ========== //
+    function validateUserOp(
+        UserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 missingAccountFunds
+    ) external override onlyEntryPoint returns (uint256 validationData) {
+        if (isBlacklisted[userOp.sender]) {
+            return SIG_VALIDATION_FAILED;
+        }
+        return super.validateUserOp(userOp, userOpHash, missingAccountFunds);
+    }
+
+    // ========== RECEIVE HANDLER ========== //
+    receive() external payable {
+        emit ETHReceived(msg.sender, msg.value);
+    }
+
+    // ========== STORAGE GAP ========== //
+    uint256[50] private __gap;
+}
+
+// ========== OPTIMIZED FACTORY CONTRACT ========== //
+contract SecureSmartWalletFactory {
+    event WalletCreated(address indexed wallet, address[] owners);
+    
+    IEntryPoint public immutable entryPoint;
+    address public immutable gasOracle;
+    address public immutable implementation;
+
+    constructor(IEntryPoint _entryPoint, address _gasOracle) {
+        entryPoint = _entryPoint;
+        gasOracle = _gasOracle;
+        implementation = address(new SecureSmartWallet(_entryPoint, _gasOracle));
+    }
+
+    function createWallet(
+        address[] calldata owners,
+        address[] calldata guardians,
+        uint256 threshold,
+        uint256[] calldata supportedChains
+    ) external returns (address) {
+        address clone = Clones.clone(implementation);
+        SecureSmartWallet(payable(clone)).initialize(
+            owners,
+            guardians,
+            threshold,
+            msg.sender,
+            supportedChains
+        );
+        emit WalletCreated(clone, owners);
+        return clone;
+    }
+}
