@@ -1,99 +1,53 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.0;
 
-import "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
-import "@account-abstraction/contracts/interfaces/UserOperation.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract SmartWallet {
-    using ECDSA for bytes32;
+contract MiniBitcoin is ERC20, Ownable {
+    using SafeMath for uint256;
 
-    address public owner;
-    IEntryPoint public entryPoint;
+    address private constant BURN_ADDRESS = 0x0000000000000000000000000000000000000000;
+    uint256 private constant _FEE_BASIS_POINTS = 1; // 0.01%
 
-    // Event untuk log eksekusi transaksi
-    event TransactionExecuted(address indexed target, uint256 value, bytes data);
+    string private _tokenIconUri; // Variabel untuk menyimpan URI ikon token
 
-    constructor(address _owner, IEntryPoint _entryPoint) {
-        owner = _owner;
-        entryPoint = _entryPoint;
+    event TokenIconUriUpdated(string newUri); // Event untuk memberi tahu saat URI ikon diperbarui
+
+    constructor() ERC20("Mini Bitcoin", "mBTC") {
+        uint256 initialSupply = 21000000 * (10**18);
+        _mint(msg.sender, initialSupply);
     }
 
-    // Modifier untuk membatasi akses hanya ke EntryPoint
-    modifier onlyEntryPoint() {
-        require(msg.sender == address(entryPoint), "Only EntryPoint can call");
-        _;
-    }
+    function _transfer(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) internal virtual override {
+        if (sender != BURN_ADDRESS && amount > 0) {
+            uint256 feeAmount = amount.mul(_FEE_BASIS_POINTS).div(10000);
+            uint256 amountAfterFee = amount.sub(feeAmount);
 
-    // Modifier untuk membatasi akses hanya ke pemilik
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call");
-        _;
-    }
+            super._transfer(sender, recipient, amountAfterFee);
 
-    /**
-     * @dev Validasi UserOperation (dipanggil oleh EntryPoint).
-     * Hanya menerima tanda tangan dari pemilik.
-     */
-    function validateUserOp(
-        UserOperation calldata userOp,
-        bytes32 userOpHash,
-        uint256 missingWalletFunds
-    ) external onlyEntryPoint returns (uint256 validationData) {
-        // Verifikasi tanda tangan pemilik
-        address recovered = userOpHash.recover(userOp.signature);
-        require(recovered == owner, "Invalid signature");
-
-        // Jika wallet perlu deposit gas, transfer dana ke EntryPoint
-        if (missingWalletFunds > 0) {
-            (bool success, ) = payable(address(entryPoint)).call{
-                value: missingWalletFunds
-            }("");
-            success; // Silence warning
+            if (feeAmount > 0) {
+                super._transfer(sender, BURN_ADDRESS, feeAmount);
+            }
+        } else {
+            super._transfer(sender, recipient, amount);
         }
-
-        return 0; // Validation successful
     }
 
-    /**
-     * @dev Eksekusi panggilan ke kontrak lain (misalnya RevokeApprovalV2).
-     * Hanya bisa dipanggil via EntryPoint.
-     */
-    function execute(
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external onlyEntryPoint {
-        (bool success, ) = target.call{value: value}(data);
-        require(success, "Execution failed");
-        emit TransactionExecuted(target, value, data);
+    // Fungsi untuk mendapatkan URI ikon token
+    function tokenIconUri() public view returns (string memory) {
+        return _tokenIconUri;
     }
 
-    // Menerima pembayaran (untuk deposit gas)
-    receive() external payable {}
-}
-
-contract SmartWalletFactory {
-    IEntryPoint public entryPoint;
-    mapping(address => address) public getWalletOfOwner; // Mapping dari owner ke alamat SmartWallet
-
-    event WalletCreated(address indexed owner, address indexed walletAddress);
-
-    constructor(IEntryPoint _entryPoint) {
-        entryPoint = _entryPoint;
-    }
-
-    function createWallet(address _owner) external returns (address) {
-        require(getWalletOfOwner[_owner] == address(0), "Wallet already exists for this owner");
-        SmartWallet newWallet = new SmartWallet(_owner, entryPoint);
-        getWalletOfOwner[_owner] = address(newWallet);
-        emit WalletCreated(_owner, address(newWallet));
-        return address(newWallet);
-    }
-
-    // Fungsi untuk mendapatkan alamat SmartWallet berdasarkan owner
-    function getSmartWalletAddress(address _owner) public view returns (address) {
-        return getWalletOfOwner[_owner];
+    // Fungsi untuk mengatur atau mengubah URI ikon token
+    // Hanya pemilik kontrak yang bisa memanggil fungsi ini
+    function setTokenIconUri(string memory uri_) public onlyOwner {
+        _tokenIconUri = uri_;
+        emit TokenIconUriUpdated(uri_);
     }
 }
-
