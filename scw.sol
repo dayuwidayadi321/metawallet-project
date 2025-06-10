@@ -11,41 +11,38 @@ contract MiniBitcoin is ERC20, Ownable {
     address private constant BURN_ADDRESS = 0x0000000000000000000000000000000000000000;
     uint256 private constant _FEE_BASIS_POINTS = 1; // 0.01%
 
-    string private _tokenIconUri; // Variabel untuk menyimpan URI ikon token
+    string private _tokenIconUri;
 
-    event TokenIconUriUpdated(string newUri); // Event untuk memberi tahu saat URI ikon diperbarui
+    event TokenIconUriUpdated(string newUri);
 
-    constructor() ERC20("Mini Bitcoin", "mBTC") {
+    constructor() ERC20("Mini Bitcoin", "mBTC") Ownable(msg.sender) {
         uint256 initialSupply = 21000000 * (10**18);
         _mint(msg.sender, initialSupply);
     }
 
-    function _transfer(
-        address sender,
-        address recipient,
+    function _update(
+        address from,
+        address to,
         uint256 amount
     ) internal virtual override {
-        if (sender != BURN_ADDRESS && amount > 0) {
+        if (from != BURN_ADDRESS && amount > 0) {
             uint256 feeAmount = amount.mul(_FEE_BASIS_POINTS).div(10000);
             uint256 amountAfterFee = amount.sub(feeAmount);
 
-            super._transfer(sender, recipient, amountAfterFee);
+            super._update(from, to, amountAfterFee);
 
             if (feeAmount > 0) {
-                super._transfer(sender, BURN_ADDRESS, feeAmount);
+                super._update(from, BURN_ADDRESS, feeAmount);
             }
         } else {
-            super._transfer(sender, recipient, amount);
+            super._update(from, to, amount);
         }
     }
 
-    // Fungsi untuk mendapatkan URI ikon token
     function tokenIconUri() public view returns (string memory) {
         return _tokenIconUri;
     }
 
-    // Fungsi untuk mengatur atau mengubah URI ikon token
-    // Hanya pemilik kontrak yang bisa memanggil fungsi ini
     function setTokenIconUri(string memory uri_) public onlyOwner {
         _tokenIconUri = uri_;
         emit TokenIconUriUpdated(uri_);
